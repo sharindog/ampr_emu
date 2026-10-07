@@ -19,6 +19,7 @@ AMPR_PROCESS_SYNC_READ_INTERCEPT ?= $(AMPR_PROCESS_READ_INTERCEPT)
 AMPR_DEBUG_LOG ?= 0
 AMPR_COMMAND_LOG ?= 0
 AMPR_PACK_IO_LOG ?= 1
+AMPR_STRICT_ORDERING ?= 0
 AMPR_INTERNAL_POOL_SIZE ?=
 ifeq ($(strip $(PACK_PROFILE_HEADER)),)
 PACK_PROFILE_FLAGS :=
@@ -38,6 +39,8 @@ PACK_ENABLE_DEFINE := -DAMPR_EMU_PACK_ENABLE=$(AMPR_PACK_ENABLE)
 LOG_DEFINES := \
   -DAMPR_EMU_DEBUG_LOG=$(AMPR_DEBUG_LOG) \
   -DAMPR_EMU_COMMAND_LOG=$(AMPR_COMMAND_LOG)
+ORDERING_DEFINES := \
+  -DAMPR_EMU_APR_STRICT_ORDERING=$(AMPR_STRICT_ORDERING)
 PACK_FS_DEFINES := \
   -DAMPR_EMU_PACK_DIRECTORY_OVERLAY_ENABLE=$(AMPR_DIRECTORY_OVERLAY) \
   -DAMPR_EMU_PACK_PROCESS_OPEN_ENABLE=$(AMPR_PROCESS_OPEN_INTERCEPT) \
@@ -128,6 +131,7 @@ COMMON_DEFS := \
   -DAMPR_PAYLOAD_SDK_BUILD=1 \
   -DAMPR_EMU_HAS_LIBKERNEL_HOOK_IMPL=1 \
   $(LOG_DEFINES) \
+  $(ORDERING_DEFINES) \
   $(PACK_ENABLE_DEFINE) \
   $(PACK_FS_DEFINES) \
   $(PACK_POOL_DEFINE) \
@@ -158,7 +162,7 @@ PRX_LDFLAGS := \
 .DELETE_ON_ERROR:
 .SECONDARY: $(CRT_OBJECTS)
 .DEFAULT_GOAL := all
-.PHONY: all clean clean-runtime-variants verify pack-tests print-vars loose-stdio packed-stdio runtime-variants FORCE
+.PHONY: all clean clean-runtime-variants verify pack-tests print-vars loose-stdio loose-stdio-strict packed-stdio runtime-variants FORCE
 
 all: $(PRX) $(SPRX)
 
@@ -288,6 +292,18 @@ loose-stdio:
 	  AMPR_PROCESS_SYNC_READ_INTERCEPT=0 \
 	  AMPR_INTERNAL_POOL_SIZE=0x04000000ull
 
+loose-stdio-strict:
+	$(MAKE) verify \
+	  OUT=out/payload-sdk-loose-stdio-strict \
+	  AMPR_PACK_ENABLE=0 \
+	  AMPR_DIRECTORY_OVERLAY=0 \
+	  AMPR_PROCESS_READ_INTERCEPT=0 \
+	  AMPR_PROCESS_OPEN_INTERCEPT=0 \
+	  AMPR_PROCESS_AIO_INTERCEPT=0 \
+	  AMPR_PROCESS_SYNC_READ_INTERCEPT=0 \
+	  AMPR_STRICT_ORDERING=1 \
+	  AMPR_INTERNAL_POOL_SIZE=0x04000000ull
+
 packed-stdio:
 	$(MAKE) verify \
 	  OUT=out/payload-sdk-packed-stdio \
@@ -298,8 +314,10 @@ packed-stdio:
 	  AMPR_PROCESS_AIO_INTERCEPT=1 \
 	  AMPR_PROCESS_SYNC_READ_INTERCEPT=1
 
-runtime-variants: loose-stdio packed-stdio
+runtime-variants: loose-stdio loose-stdio-strict packed-stdio
 	@mkdir -p out/payload-sdk-variants
+	cp out/payload-sdk-loose-stdio-strict/libSceAmpr.prx out/payload-sdk-variants/libSceAmpr-loose-stdio-strict.prx
+	cp out/payload-sdk-loose-stdio-strict/libSceAmpr.sprx out/payload-sdk-variants/libSceAmpr-loose-stdio-strict.sprx
 	cp out/payload-sdk-loose-stdio/libSceAmpr.prx out/payload-sdk-variants/libSceAmpr-loose-stdio.prx
 	cp out/payload-sdk-loose-stdio/libSceAmpr.sprx out/payload-sdk-variants/libSceAmpr-loose-stdio.sprx
 	cp out/payload-sdk-packed-stdio/libSceAmpr.prx out/payload-sdk-variants/libSceAmpr-packed-stdio.prx
@@ -312,7 +330,7 @@ clean:
 	rm -rf $(OUT)
 
 clean-runtime-variants:
-	rm -rf out/payload-sdk-loose-stdio out/payload-sdk-packed-stdio out/payload-sdk-variants
+	rm -rf out/payload-sdk-loose-stdio out/payload-sdk-loose-stdio-strict out/payload-sdk-packed-stdio out/payload-sdk-variants
 
 print-vars:
 	@echo "PS5_PAYLOAD_SDK=$(PS5_PAYLOAD_SDK)"
@@ -326,6 +344,7 @@ print-vars:
 	@echo "AMPR_DEBUG_LOG=$(AMPR_DEBUG_LOG)"
 	@echo "AMPR_COMMAND_LOG=$(AMPR_COMMAND_LOG)"
 	@echo "AMPR_PACK_IO_LOG=$(AMPR_PACK_IO_LOG)"
+	@echo "AMPR_STRICT_ORDERING=$(AMPR_STRICT_ORDERING)"
 	@echo "AMPR_INTERNAL_POOL_SIZE=$(AMPR_INTERNAL_POOL_SIZE)"
 	@echo "PRX_SCRIPT_SOURCE=$(PRX_SCRIPT_SOURCE)"
 	@echo "PROSPERO_200_FSELF_VERSION=$(PROSPERO_200_FSELF_VERSION)"

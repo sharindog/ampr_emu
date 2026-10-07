@@ -961,7 +961,8 @@ public:
         job->sourceBytes = j.sourceBytes;
         job->nativeSubmitType = j.nativeSubmitType;
 #if AMPR_EMU_APR_AIO_CROSS_EOP_READAHEAD
-        job->fairDirectReadStream = classify_fair_direct_read_stream(*job);
+        job->fairDirectReadStream = !AMPR_EMU_APR_STRICT_ORDERING &&
+                                    classify_fair_direct_read_stream(*job);
 #endif
 #if AMPR_EMU_APR_EAGER_NATIVE_EQUEUE
         const int eagerPlanRc = analyze_eager_native_event_plan(*job);
@@ -9141,6 +9142,13 @@ private:
             readIssueBudget.bytesLeft == 0) {
             return false;
         }
+#if AMPR_EMU_APR_STRICT_ORDERING
+        // Strict ordering never issues a read ahead of the FIFO cursor, so the
+        // speculative scan state (fences, scan cursor) is never activated.
+        (void)gs;
+        (void)admission;
+        return false;
+#endif
 
         const uint32_t laneIndex = job->prioIndex;
         // Passive completion fences should not consume a complete scheduler
@@ -10491,6 +10499,19 @@ private:
                 break;
             }
 
+#if AMPR_EMU_APR_STRICT_ORDERING
+            // A flush-enabled wait is a drain point in the strict profile:
+            // every earlier read of this lane must have landed and every
+            // earlier native completion record must be published before the
+            // condition is sampled, so commands behind it never overlap them.
+            if (op.type == OpType::WaitOnAddress && (op.u32c & 1u) != 0 &&
+                (priorReadFencePending || priorNativeBatchPending ||
+                 nativeBatchPending || job_has_outstanding_reads(*job))) {
+                cache_decoded_op(*job, op, opBytes);
+                log_blocked_job(*job, op, "strict-flush-wait-drain");
+                break;
+            }
+#endif
             bool softwareAddressHandled = false;
             bool softwareAddressComplete = false;
             if (!try_execute_software_address_op(*job,

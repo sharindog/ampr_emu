@@ -29,6 +29,18 @@
 #define AMPR_EMU_PERCENT_FLOOR(value, percent) (((value) * (percent)) / 100)
 #endif
 
+#ifndef AMPR_EMU_APR_STRICT_ORDERING
+// 1 -> diagnostic ordering profile for titles that observe stale or partially
+// loaded APR destinations (corrupted serialized blocks, wild pointer rebases).
+// Disables every APR read that is issued ahead of the FIFO execution cursor:
+// adjacent-read coalescing, cross-EOP/cross-job read-ahead and the fair direct
+// read phase. A WaitOnAddress with WaitFlush::kEnable additionally becomes a
+// drain point: it is evaluated only after all earlier reads of its priority
+// lane have retired and all earlier native completion records are published.
+// Stricter ordering is always a valid A53 schedule; it only costs throughput.
+#define AMPR_EMU_APR_STRICT_ORDERING 0
+#endif
+
 #ifndef AMPR_EMU_FD_OPEN_BUDGET_CAP
 // Combined APR FD budget for cached descriptors plus direct single-quantum
 // full-file AIO opens.
@@ -191,7 +203,11 @@
 // Merge adjacent APR read commands only when their resolved file ranges and
 // destination ranges are both exactly contiguous. No fence, wait, event, reset,
 // EOP, native packet, or other non-read command may be crossed.
+#if AMPR_EMU_APR_STRICT_ORDERING
+#define AMPR_EMU_LOOSE_COALESCE_ENABLE 0
+#else
 #define AMPR_EMU_LOOSE_COALESCE_ENABLE 1
+#endif
 #endif
 
 #ifndef AMPR_EMU_LOOSE_COALESCE_MAX_BYTES
