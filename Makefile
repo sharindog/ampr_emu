@@ -20,6 +20,8 @@ AMPR_DEBUG_LOG ?= 0
 AMPR_COMMAND_LOG ?= 0
 AMPR_PACK_IO_LOG ?= 1
 AMPR_STRICT_ORDERING ?= 0
+AMPR_DEBUG_LOG_PATH ?=
+AMPR_COMMAND_LOG_PATH ?=
 AMPR_INTERNAL_POOL_SIZE ?=
 ifeq ($(strip $(PACK_PROFILE_HEADER)),)
 PACK_PROFILE_FLAGS :=
@@ -39,6 +41,12 @@ PACK_ENABLE_DEFINE := -DAMPR_EMU_PACK_ENABLE=$(AMPR_PACK_ENABLE)
 LOG_DEFINES := \
   -DAMPR_EMU_DEBUG_LOG=$(AMPR_DEBUG_LOG) \
   -DAMPR_EMU_COMMAND_LOG=$(AMPR_COMMAND_LOG)
+ifneq ($(strip $(AMPR_DEBUG_LOG_PATH)),)
+LOG_DEFINES += -DAMPR_EMU_DEBUG_LOG_PATH='"$(AMPR_DEBUG_LOG_PATH)"'
+endif
+ifneq ($(strip $(AMPR_COMMAND_LOG_PATH)),)
+LOG_DEFINES += -DAMPR_EMU_COMMAND_LOG_PATH='"$(AMPR_COMMAND_LOG_PATH)"'
+endif
 ORDERING_DEFINES := \
   -DAMPR_EMU_APR_STRICT_ORDERING=$(AMPR_STRICT_ORDERING)
 PACK_FS_DEFINES := \
@@ -304,6 +312,25 @@ loose-stdio-strict:
 	  AMPR_STRICT_ORDERING=1 \
 	  AMPR_INTERNAL_POOL_SIZE=0x04000000ull
 
+# Diagnostic variant of loose-stdio-strict: text log plus the complete binary
+# APR/AMM command journal, written to /data so the crash tail survives a GPU
+# fault that floods the kernel log.
+loose-stdio-strict-trace:
+	$(MAKE) verify \
+	  OUT=out/payload-sdk-loose-stdio-strict-trace \
+	  AMPR_PACK_ENABLE=0 \
+	  AMPR_DIRECTORY_OVERLAY=0 \
+	  AMPR_PROCESS_READ_INTERCEPT=0 \
+	  AMPR_PROCESS_OPEN_INTERCEPT=0 \
+	  AMPR_PROCESS_AIO_INTERCEPT=0 \
+	  AMPR_PROCESS_SYNC_READ_INTERCEPT=0 \
+	  AMPR_STRICT_ORDERING=1 \
+	  AMPR_DEBUG_LOG=1 \
+	  AMPR_COMMAND_LOG=3 \
+	  AMPR_DEBUG_LOG_PATH=/data/ampr_emu.log \
+	  AMPR_COMMAND_LOG_PATH=/data/ampr_commands.bin \
+	  AMPR_INTERNAL_POOL_SIZE=0x04000000ull
+
 packed-stdio:
 	$(MAKE) verify \
 	  OUT=out/payload-sdk-packed-stdio \
@@ -314,10 +341,12 @@ packed-stdio:
 	  AMPR_PROCESS_AIO_INTERCEPT=1 \
 	  AMPR_PROCESS_SYNC_READ_INTERCEPT=1
 
-runtime-variants: loose-stdio loose-stdio-strict packed-stdio
+runtime-variants: loose-stdio loose-stdio-strict loose-stdio-strict-trace packed-stdio
 	@mkdir -p out/payload-sdk-variants
 	cp out/payload-sdk-loose-stdio-strict/libSceAmpr.prx out/payload-sdk-variants/libSceAmpr-loose-stdio-strict.prx
 	cp out/payload-sdk-loose-stdio-strict/libSceAmpr.sprx out/payload-sdk-variants/libSceAmpr-loose-stdio-strict.sprx
+	cp out/payload-sdk-loose-stdio-strict-trace/libSceAmpr.prx out/payload-sdk-variants/libSceAmpr-loose-stdio-strict-trace.prx
+	cp out/payload-sdk-loose-stdio-strict-trace/libSceAmpr.sprx out/payload-sdk-variants/libSceAmpr-loose-stdio-strict-trace.sprx
 	cp out/payload-sdk-loose-stdio/libSceAmpr.prx out/payload-sdk-variants/libSceAmpr-loose-stdio.prx
 	cp out/payload-sdk-loose-stdio/libSceAmpr.sprx out/payload-sdk-variants/libSceAmpr-loose-stdio.sprx
 	cp out/payload-sdk-packed-stdio/libSceAmpr.prx out/payload-sdk-variants/libSceAmpr-packed-stdio.prx
@@ -330,7 +359,7 @@ clean:
 	rm -rf $(OUT)
 
 clean-runtime-variants:
-	rm -rf out/payload-sdk-loose-stdio out/payload-sdk-loose-stdio-strict out/payload-sdk-packed-stdio out/payload-sdk-variants
+	rm -rf out/payload-sdk-loose-stdio out/payload-sdk-loose-stdio-strict out/payload-sdk-loose-stdio-strict-trace out/payload-sdk-packed-stdio out/payload-sdk-variants
 
 print-vars:
 	@echo "PS5_PAYLOAD_SDK=$(PS5_PAYLOAD_SDK)"
