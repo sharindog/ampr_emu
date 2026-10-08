@@ -816,6 +816,17 @@ void hook_logf_enabled(const char* fmt, ...) {
         sce::Ampr::Emu::debugLogCriticalf(__VA_ARGS__); \
     } while (0)
 
+// Memory-map hook trace: every call whose protection was promoted for AMPR
+// writes, and every call the kernel rejected, goes to the file log so a GPU
+// fault address can be matched against the last mapping of that range.
+#if AMPR_EMU_DEBUG_LOG && AMPR_EMU_MEMORY_HOOK_TRACE
+#define mem_trace_logf(...) sce::Ampr::Emu::debugLogf(__VA_ARGS__)
+#define AMPR_MEM_TRACE 1
+#else
+#define mem_trace_logf(...) ((void)0)
+#define AMPR_MEM_TRACE 0
+#endif
+
 #if AMPR_HOOK_VERBOSE_LOG
 [[maybe_unused]] void flush_runtime_hook_log_records() {
     uint64_t flushSequence = g_runtimeHookLogFlushSequence.load(std::memory_order_acquire);
@@ -2071,7 +2082,12 @@ extern "C" int sceKernelMprotect_emul(const void* addr, size_t len, int prot) {
                            protAdjust.original,
                            protAdjust.adjusted);
     }
-    return call_original_sceKernelMprotect(addr, len, protAdjust.adjusted);
+    const int rc = call_original_sceKernelMprotect(addr, len, protAdjust.adjusted);
+    if (protAdjust.changed() || rc != 0) {
+        mem_trace_logf("mem.hook op=mprotect addr=%p len=0x%zx prot=0x%x adjusted=0x%x rc=0x%x",
+                       addr, len, protAdjust.original, protAdjust.adjusted, rc);
+    }
+    return rc;
 }
 
 extern "C" int sceKernelMtypeprotect_emul(const void* addr, size_t size, int type, int prot) {
@@ -2084,7 +2100,12 @@ extern "C" int sceKernelMtypeprotect_emul(const void* addr, size_t size, int typ
                            protAdjust.original,
                            protAdjust.adjusted);
     }
-    return call_original_sceKernelMtypeprotect(addr, size, type, protAdjust.adjusted);
+    const int rc = call_original_sceKernelMtypeprotect(addr, size, type, protAdjust.adjusted);
+    if (protAdjust.changed() || rc != 0) {
+        mem_trace_logf("mem.hook op=mtypeprotect addr=%p len=0x%zx type=0x%x prot=0x%x adjusted=0x%x rc=0x%x",
+                       addr, size, type, protAdjust.original, protAdjust.adjusted, rc);
+    }
+    return rc;
 }
 
 extern "C" int sceKernelMapFlexibleMemory_emul(void** addrInOut, size_t len, int prot, int flags) {
@@ -2097,7 +2118,12 @@ extern "C" int sceKernelMapFlexibleMemory_emul(void** addrInOut, size_t len, int
                            protAdjust.adjusted,
                            flags);
     }
-    return call_original_sceKernelMapFlexibleMemory(addrInOut, len, protAdjust.adjusted, flags);
+    const int rc = call_original_sceKernelMapFlexibleMemory(addrInOut, len, protAdjust.adjusted, flags);
+    if (protAdjust.changed() || rc != 0) {
+        mem_trace_logf("mem.hook op=mapFlexible addr=%p len=0x%zx prot=0x%x adjusted=0x%x flags=0x%x rc=0x%x",
+                       addrInOut ? *addrInOut : nullptr, len, protAdjust.original, protAdjust.adjusted, flags, rc);
+    }
+    return rc;
 }
 
 extern "C" int sceKernelMapDirectMemory_emul(void** addr,
@@ -2117,7 +2143,13 @@ extern "C" int sceKernelMapDirectMemory_emul(void** addr,
                            (unsigned long long)directMemoryStart,
                            (unsigned long long)maxPageSize);
     }
-    return call_original_sceKernelMapDirectMemory(addr, len, protAdjust.adjusted, flags, directMemoryStart, maxPageSize);
+    const int rc = call_original_sceKernelMapDirectMemory(addr, len, protAdjust.adjusted, flags, directMemoryStart, maxPageSize);
+    if (protAdjust.changed() || rc != 0) {
+        mem_trace_logf("mem.hook op=mapDirect addr=%p len=0x%zx prot=0x%x adjusted=0x%x flags=0x%x dmem=0x%llx rc=0x%x",
+                       addr ? *addr : nullptr, len, protAdjust.original, protAdjust.adjusted, flags,
+                       (unsigned long long)directMemoryStart, rc);
+    }
+    return rc;
 }
 
 extern "C" int sceKernelMapDirectMemory2_emul(void** addr,
@@ -2139,7 +2171,13 @@ extern "C" int sceKernelMapDirectMemory2_emul(void** addr,
                            (unsigned long long)directMemoryStart,
                            (unsigned long long)maxPageSize);
     }
-    return call_original_sceKernelMapDirectMemory2(addr, len, type, protAdjust.adjusted, flags, directMemoryStart, maxPageSize);
+    const int rc = call_original_sceKernelMapDirectMemory2(addr, len, type, protAdjust.adjusted, flags, directMemoryStart, maxPageSize);
+    if (protAdjust.changed() || rc != 0) {
+        mem_trace_logf("mem.hook op=mapDirect2 addr=%p len=0x%zx type=0x%x prot=0x%x adjusted=0x%x flags=0x%x dmem=0x%llx rc=0x%x",
+                       addr ? *addr : nullptr, len, type, protAdjust.original, protAdjust.adjusted, flags,
+                       (unsigned long long)directMemoryStart, rc);
+    }
+    return rc;
 }
 
 static bool batch_map_operation_has_protection(int operation) {
@@ -2166,6 +2204,10 @@ static int adjust_batch_map_entries_for_ampr_write(SceKernelBatchMapEntry* entri
         }
         entry.protection = static_cast<char>(adjustedProt);
         ++adjustedCount;
+        mem_trace_logf("mem.hook op=%s.entry index=%d addr=%p len=0x%zx mapOp=%d type=0x%x prot=0x%x adjusted=0x%x",
+                       apiName, index, entry.start, entry.length, entry.operation,
+                       static_cast<int>(entry.type), static_cast<unsigned>(prot),
+                       static_cast<unsigned>(adjustedProt));
         hook_logf("%s.ampr_write_cpu_rw index=%d addr=%p len=%zu op=%d type=0x%x prot=0x%x adjusted=0x%x",
                            apiName,
                            index,
@@ -2179,14 +2221,55 @@ static int adjust_batch_map_entries_for_ampr_write(SceKernelBatchMapEntry* entri
     return adjustedCount;
 }
 
+static void trace_batch_map_result(const char* apiName,
+                                   const SceKernelBatchMapEntry* entries,
+                                   int numberOfEntries,
+                                   const int* numberOfEntriesOut,
+                                   int flags,
+                                   int adjustedCount,
+                                   int rc) {
+#if AMPR_MEM_TRACE
+    if (adjustedCount == 0 && rc == 0) {
+        return;
+    }
+    const int done = numberOfEntriesOut ? *numberOfEntriesOut : -1;
+    mem_trace_logf("mem.hook op=%s entries=%d done=%d adjusted=%d flags=0x%x rc=0x%x",
+                   apiName, numberOfEntries, done, adjustedCount, flags, rc);
+    if (rc != 0 && entries) {
+        // The first unprocessed entry is the one the kernel refused.
+        const int first = done >= 0 && done < numberOfEntries ? done : 0;
+        const int last = numberOfEntries < first + 8 ? numberOfEntries : first + 8;
+        for (int index = first; index < last; ++index) {
+            const SceKernelBatchMapEntry& entry = entries[index];
+            mem_trace_logf("mem.hook op=%s.failed index=%d addr=%p len=0x%zx mapOp=%d type=0x%x prot=0x%x",
+                           apiName, index, entry.start, entry.length, entry.operation,
+                           static_cast<int>(entry.type),
+                           static_cast<unsigned>(static_cast<uint8_t>(entry.protection)));
+        }
+    }
+#else
+    (void)apiName;
+    (void)entries;
+    (void)numberOfEntries;
+    (void)numberOfEntriesOut;
+    (void)flags;
+    (void)adjustedCount;
+    (void)rc;
+#endif
+}
+
 extern "C" int sceKernelBatchMap_emul(SceKernelBatchMapEntry* entries, int numberOfEntries, int* numberOfEntriesOut) {
-    (void)adjust_batch_map_entries_for_ampr_write(entries, numberOfEntries, "batchMap");
-    return call_original_sceKernelBatchMap(entries, numberOfEntries, numberOfEntriesOut);
+    const int adjusted = adjust_batch_map_entries_for_ampr_write(entries, numberOfEntries, "batchMap");
+    const int rc = call_original_sceKernelBatchMap(entries, numberOfEntries, numberOfEntriesOut);
+    trace_batch_map_result("batchMap", entries, numberOfEntries, numberOfEntriesOut, 0, adjusted, rc);
+    return rc;
 }
 
 extern "C" int sceKernelBatchMap2_emul(SceKernelBatchMapEntry* entries, int numberOfEntries, int* numberOfEntriesOut, int flags) {
-    (void)adjust_batch_map_entries_for_ampr_write(entries, numberOfEntries, "batchMap2");
-    return call_original_sceKernelBatchMap2(entries, numberOfEntries, numberOfEntriesOut, flags);
+    const int adjusted = adjust_batch_map_entries_for_ampr_write(entries, numberOfEntries, "batchMap2");
+    const int rc = call_original_sceKernelBatchMap2(entries, numberOfEntries, numberOfEntriesOut, flags);
+    trace_batch_map_result("batchMap2", entries, numberOfEntries, numberOfEntriesOut, flags, adjusted, rc);
+    return rc;
 }
 
 extern "C" int sceKernelJitMapSharedMemory_emul(int fd, int prot, void** startOut) {
@@ -2233,6 +2316,9 @@ static void log_memory_pool_batch_adjustment(const SceKernelMemoryPoolBatchEntry
                                              int type,
                                              uint8_t prot,
                                              uint8_t adjustedProt) {
+    mem_trace_logf("mem.hook op=memoryPoolBatch.entry index=%d addr=%p len=0x%zx poolOp=%u type=0x%x prot=0x%x adjusted=0x%x",
+                   index, addr, len, entry.op, type,
+                   static_cast<unsigned>(prot), static_cast<unsigned>(adjustedProt));
     hook_logf("memoryPoolBatch.ampr_write_cpu_rw index=%d addr=%p len=%zu op=%u type=0x%x prot=0x%x adjusted=0x%x flags=0x%x",
                        index,
                        addr,
@@ -2290,7 +2376,12 @@ static void adjust_memory_pool_batch_entries_for_ampr_write(SceKernelMemoryPoolB
 extern "C" int sceKernelMemoryPoolBatch_emul(const SceKernelMemoryPoolBatchEntry* entries, int n, int* indexOut, int flags) {
     const int firstAdjustmentIndex = memory_pool_batch_first_adjustment_index(entries, n);
     if (firstAdjustmentIndex < 0) {
-        return call_original_sceKernelMemoryPoolBatch(entries, n, indexOut, flags);
+        const int rc = call_original_sceKernelMemoryPoolBatch(entries, n, indexOut, flags);
+        if (rc != 0) {
+            mem_trace_logf("mem.hook op=memoryPoolBatch entries=%d index=%d adjusted=0 flags=0x%x rc=0x%x",
+                           n, indexOut ? *indexOut : -1, flags, rc);
+        }
+        return rc;
     }
 
     const size_t count = static_cast<size_t>(n);
@@ -2319,6 +2410,8 @@ extern "C" int sceKernelMemoryPoolBatch_emul(const SceKernelMemoryPoolBatchEntry
         reinterpret_cast<SceKernelMemoryPoolBatchEntry*>(copyLease.storage());
     adjust_memory_pool_batch_entries_for_ampr_write(copyEntries, firstAdjustmentIndex, n);
     const int rc = call_original_sceKernelMemoryPoolBatch(copyEntries, n, indexOut, flags);
+    mem_trace_logf("mem.hook op=memoryPoolBatch entries=%d index=%d adjusted=1 first=%d flags=0x%x rc=0x%x",
+                   n, indexOut ? *indexOut : -1, firstAdjustmentIndex, flags, rc);
     return rc;
 }
 
@@ -2333,7 +2426,12 @@ extern "C" int sceKernelMemoryPoolCommit_emul(void* addr, size_t len, int type, 
                            protAdjust.adjusted,
                            flags);
     }
-    return call_original_sceKernelMemoryPoolCommit(addr, len, type, protAdjust.adjusted, flags);
+    const int rc = call_original_sceKernelMemoryPoolCommit(addr, len, type, protAdjust.adjusted, flags);
+    if (protAdjust.changed() || rc != 0) {
+        mem_trace_logf("mem.hook op=memoryPoolCommit addr=%p len=0x%zx type=0x%x prot=0x%x adjusted=0x%x flags=0x%x rc=0x%x",
+                       addr, len, type, protAdjust.original, protAdjust.adjusted, flags, rc);
+    }
+    return rc;
 }
 
 extern "C" int sceKernelMapNamedFlexibleMemory_emul(void** addrInOut,

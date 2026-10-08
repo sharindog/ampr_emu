@@ -792,6 +792,13 @@
 #error "AMPR_EMU_COMMAND_LOG requires AMPR_EMU_DEBUG_LOG because the command journal follows the main logger lifecycle"
 #endif
 
+#ifndef AMPR_EMU_MEMORY_HOOK_TRACE
+// 1 -> with AMPR_EMU_DEBUG_LOG, log every intercepted memory map/protect call
+// whose protection was promoted for AMPR writes and every such call the kernel
+// rejected (address, length, original/promoted protection, return code).
+#define AMPR_EMU_MEMORY_HOOK_TRACE 0
+#endif
+
 #ifndef AMPR_EMU_DEBUG_LOG_VERBOSE
 // 1 -> enable moderate success-path diagnostics. This level is intended to be
 // usable during real startup/hang investigation without export/AMM hot-call

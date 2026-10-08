@@ -18,6 +18,7 @@ AMPR_PROCESS_AIO_INTERCEPT ?= $(AMPR_PROCESS_READ_INTERCEPT)
 AMPR_PROCESS_SYNC_READ_INTERCEPT ?= $(AMPR_PROCESS_READ_INTERCEPT)
 AMPR_DEBUG_LOG ?= 0
 AMPR_COMMAND_LOG ?= 0
+AMPR_MEMORY_HOOK_TRACE ?= 0
 AMPR_PACK_IO_LOG ?= 1
 AMPR_STRICT_ORDERING ?= 0
 AMPR_DEBUG_LOG_PATH ?=
@@ -40,7 +41,8 @@ endif
 PACK_ENABLE_DEFINE := -DAMPR_EMU_PACK_ENABLE=$(AMPR_PACK_ENABLE)
 LOG_DEFINES := \
   -DAMPR_EMU_DEBUG_LOG=$(AMPR_DEBUG_LOG) \
-  -DAMPR_EMU_COMMAND_LOG=$(AMPR_COMMAND_LOG)
+  -DAMPR_EMU_COMMAND_LOG=$(AMPR_COMMAND_LOG) \
+  -DAMPR_EMU_MEMORY_HOOK_TRACE=$(AMPR_MEMORY_HOOK_TRACE)
 ifneq ($(strip $(AMPR_DEBUG_LOG_PATH)),)
 LOG_DEFINES += -DAMPR_EMU_DEBUG_LOG_PATH='"$(AMPR_DEBUG_LOG_PATH)"'
 endif
@@ -312,9 +314,11 @@ loose-stdio-strict:
 	  AMPR_STRICT_ORDERING=1 \
 	  AMPR_INTERNAL_POOL_SIZE=0x04000000ull
 
-# Diagnostic variant of loose-stdio-strict: text log plus the complete binary
-# APR/AMM command journal, written to /data so the crash tail survives a GPU
-# fault that floods the kernel log.
+# Diagnostic variant of loose-stdio-strict: text log plus a trace of every
+# intercepted memory map/protect call that was promoted or rejected, written to
+# /data so the crash tail survives a GPU fault that floods the kernel log.
+# The binary command journal stays off: on loose installs its writer cannot
+# keep up and the queue overflow also starves the text log.
 loose-stdio-strict-trace:
 	$(MAKE) verify \
 	  OUT=out/payload-sdk-loose-stdio-strict-trace \
@@ -326,7 +330,7 @@ loose-stdio-strict-trace:
 	  AMPR_PROCESS_SYNC_READ_INTERCEPT=0 \
 	  AMPR_STRICT_ORDERING=1 \
 	  AMPR_DEBUG_LOG=1 \
-	  AMPR_COMMAND_LOG=3 \
+	  AMPR_MEMORY_HOOK_TRACE=1 \
 	  AMPR_DEBUG_LOG_PATH=/data/ampr_emu.log \
 	  AMPR_COMMAND_LOG_PATH=/data/ampr_commands.bin \
 	  AMPR_INTERNAL_POOL_SIZE=0x04000000ull
